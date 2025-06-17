@@ -1,0 +1,107 @@
+---
+- name: Load vaulted variables
+  include_vars:
+    file: '{{ playbook_dir }}/roles/wordpress_app/vars/vault.yml'
+  no_log: true
+
+- name: Create a network for wordpress
+  community.docker.docker_network:
+    name: wordpress_net
+
+- name: Create a volume for MariaDB data
+  community.docker.docker_volume:
+    name: mariadb_data
+
+- name: Create a volume for WordPress files
+  community.docker.docker_volume:
+    name: wordpress_files
+
+- name: Start MariaDB container
+  community.docker.docker_container:
+    name: db
+    image: mariadb:10.5
+    restart_policy: always
+    networks:
+      - name: wordpress_net
+    volumes:
+      - "mariadb_data:/var/lib/mysql"
+    env:
+      MYSQL_ROOT_PASSWORD: "{{ db_root_password }}"
+      MYSQL_DATABASE: "{{ db_name }}"
+      MYSQL_USER: "{{ db_user }}"
+      MYSQL_PASSWORD: "{{ db_password }}"
+    state: started
+
+- name: Start WordPress container
+  community.docker.docker_container:
+    name: wordpress
+    image: wordpress:latest
+    restart_policy: always
+    networks:
+      - name: wordpress_net
+    volumes:
+      - "wordpress_files:/var/www/html"
+    env:
+      WORDPRESS_DB_HOST: "db:3306"
+      WORDPRESS_DB_USER: "{{ db_user }}"
+      WORDPRESS_DB_PASSWORD: "{{ db_password }}"
+      WORDPRESS_DB_NAME: "{{ db_name }}"
+    state: started
+
+- name: Create required directories for Nginx and Certbot
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - /etc/ansible_nginx/ # Для конфигов
+    - /var/www/certbot    # Для проверки Certbot
+    - /etc/letsencrypt    # Для монтирования сертификатов (даже если пустая)
+
+- name: Deploy temporary Nginx config for Certbot validation
+  template:
+    src: nginx_temp.conf.j2
+    dest: /etc/ansible_nginx/wordpress.conf
+  notify: Restart Nginx Container
+
+- name: Start Nginx container with temporary config
+  community.docker.docker_container:
+    name: nginx
+    image: nginx:latest
+    restart_policy: always
+    networks:
+      - name: wordpress_net
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/etc/ansible_nginx/wordpress.conf:/etc/nginx/conf.d/default.conf:ro"
+      - "/etc/letsencrypt:/etc/letsencrypt:ro"
+      - "/var/www/certbot:/var/www/certbot:rw"
+    state: started
+  # ВАЖНО: Мы запускаем handler НЕМЕДЛЕННО, чтобы Nginx перечитал временный конфиг
+  # flush_handlers гарантирует, что все "уведомления" выполнятся прямо сейчас.
+- name: Flush handlers to apply temporary config
+  meta: flush_handlers
+
+
+- name: Install Certbot
+  apt:
+    name: python3-certbot-nginx
+    state: present
+
+- name: Obtain Let's Encrypt certificate if it doesn't exist
+  command: >
+    certbot certonly --webroot -w /var/www/certbot
+    -d {{ domain_name }}
+    --email {{ letsencrypt_email }}
+    --rsa-key-size 4096 --agree-tos --non-interactive --force-renewal
+  args:
+    # Команда выполнится только если папки с сертификатом нет
+    creates: /etc/letsencrypt/live/{{ domain_name }}/fullchain.pem
+
+- name: Deploy final Nginx config with SSL
+  template:
+    src: nginx.conf.j2
+    dest: /etc/ansible_nginx/wordpress.conf
+  notify: Restart Nginx Container

@@ -1,0 +1,7 @@
+---
+- name: Apply base server configuration
+  hosts: tag_wordpress
+  become: true
+  roles:
+    - geerlingguy.docker
+    - wordpress_app

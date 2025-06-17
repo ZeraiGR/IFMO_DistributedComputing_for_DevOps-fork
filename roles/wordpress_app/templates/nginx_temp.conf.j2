@@ -1,0 +1,14 @@
+# Этот конфиг слушает ТОЛЬКО порт 80 и нужен для прохождения проверки Certbot
+
+server {
+    listen 80;
+    server_name {{ domain_name }};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 404;
+    }
+}
