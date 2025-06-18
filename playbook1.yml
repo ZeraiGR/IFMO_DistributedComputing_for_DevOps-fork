@@ -1,6 +1,22 @@
 ---
 - name: Home work 1
   hosts: carrier
+  become: true
+  vars:
+    # Пример значений, их можно переопределять в inventory
+    is_wordpress: true
+    wordpress_port: 9000    # fpm порт внутри сети Docker
+    wordpress_db_name: wp_db
+    db_user: wp_user
+    db_pass: supersecurepassword
+    db_root_pass: superrootpass
+    db_host: wp-db
+    wp_container_name: wp-app
+    wp_db_container_name: wp-db
+    domain: "kirill-gruzdy.ru"
+    email: "kirillgr15@mail.ru"
+    wordpress_data_dir: /srv/docker/wordpress
+    mariadb_data_dir: /srv/docker/mariadb
   tasks:
     - name: Display Configuration Variables
       ansible.builtin.debug:
@@ -10,3 +26,162 @@
           - "wordpress_db_name: {{ wordpress_db_name }}" # WP database name
           - "db_host: {{ db_host }}" # container name
           - "db_pass: {{ db_pass }}" # root password
+
+    - name: Ensure apt cache is up to date (Debian/Ubuntu)
+      ansible.builtin.apt:
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install Docker & nginx dependencies
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - nginx
+          - python3-docker
+          - certbot
+          - python3-certbot-nginx
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/{{ ansible_distribution | lower }} {{ ansible_distribution_release }} stable"
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Install Docker engine
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+        update_cache: yes
+        state: present
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: Create docker network for WP stack
+      community.docker.docker_network:
+        name: wp-network
+        driver: bridge
+        state: present
+
+    - name: Create MariaDB data folder
+      ansible.builtin.file:
+        path: /srv/docker/mariadb
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+    
+    - name: Run MariaDB container
+      community.docker.docker_container:
+        name: "{{ wp_db_container_name }}"
+        image: mariadb:11
+        state: started
+        restart_policy: unless-stopped
+        networks:
+          - name: wp-network
+        env:
+          MYSQL_DATABASE: "{{ wordpress_db_name }}"
+          MYSQL_USER: "{{ db_user }}"
+          MYSQL_PASSWORD: "{{ db_pass }}"
+          MYSQL_ROOT_PASSWORD: "{{ db_root_pass }}"
+        volumes:
+          - "{{ mariadb_data_dir }}:/var/lib/mysql"
+
+    - name: Create WordPress data directory
+      ansible.builtin.file:
+        path: "{{ wordpress_data_dir }}"
+        state: directory
+        owner: 33
+        group: 33
+        mode: "0755"
+    
+    - name: Run WordPress FPM container
+      community.docker.docker_container:
+        name: "{{ wp_container_name }}"
+        image: wordpress:6-fpm
+        state: started
+        restart_policy: unless-stopped
+        networks:
+          - name: wp-network
+        ports:
+          - "127.0.0.1:9000:9000"
+        env:
+          WORDPRESS_DB_HOST: "{{ db_host }}"
+          WORDPRESS_DB_NAME: "{{ wordpress_db_name }}"
+          WORDPRESS_DB_USER: "{{ db_user }}"
+          WORDPRESS_DB_PASSWORD: "{{ db_pass }}"
+        volumes:
+          - "{{ wordpress_data_dir }}:/var/www/html"
+        
+    - name: Disable default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Upload nginx config for WordPress FPM
+      ansible.builtin.copy:
+        dest: /etc/nginx/sites-available/wordpress.conf
+        mode: "0644"
+        content: |
+          server {
+              listen 80;
+              server_name {{ domain }};
+
+              root {{ wordpress_data_dir }};
+              index index.php index.html index.htm;
+
+              location / {
+                  try_files $uri $uri/ /index.php?$args;
+              }
+
+              location ~ \.php$ {
+                  include /etc/nginx/fastcgi_params;
+                  fastcgi_pass 127.0.0.1:9000;
+                  fastcgi_index index.php;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+              }
+
+              location ~ /\.ht {
+                  deny all;
+              }
+          }
+      notify: Reload nginx
+
+    - name: Enable site wordpress.conf
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/wordpress.conf
+        dest: /etc/nginx/sites-enabled/wordpress.conf
+        state: link
+      notify: Reload nginx
+
+    - name: Ensure nginx is running
+      ansible.builtin.service:
+        name: nginx
+        enabled: yes
+        state: started
+
+    - name: Obtain/renew LetsEncrypt SSL certificate
+      ansible.builtin.command:
+        cmd: "certbot --nginx --non-interactive --agree-tos --redirect -m {{ email }} -d {{ domain }}"
+      args:
+        creates: "/etc/letsencrypt/live/{{ domain }}/fullchain.pem"
+      notify: Reload nginx
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded

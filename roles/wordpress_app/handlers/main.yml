@@ -1,6 +1,0 @@
----
-- name: Restart Nginx Container
-  community.docker.docker_container:
-    name: nginx
-    state: started
-    restart: yes
