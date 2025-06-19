@@ -40,7 +40,6 @@
           - curl
           - gnupg
           - lsb-release
-          - nginx
           - python3-docker
         state: present
       when: ansible_distribution == "Ubuntu"
@@ -162,12 +161,6 @@
               fastcgi_index  index.php;
             }
           }
-
-    - name: Stop system nginx service if running (free up port 80)
-      ansible.builtin.service:
-        name: nginx
-        state: stopped
-      ignore_errors: yes
 
     - name: Run nginx container for WordPress
       community.docker.docker_container:
