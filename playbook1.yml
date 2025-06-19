@@ -1,22 +1,7 @@
 ---
-- name: Home work 1
+- name: Home work 1 - Deploy Base Infrastructure (Docker, WordPress, Nginx, DB Master)
   hosts: carrier
   become: true
-  vars:
-    # Пример значений, их можно переопределять в inventory
-    is_wordpress: true
-    wordpress_port: 9000
-    wordpress_db_name: wp_db
-    db_user: wp_user
-    db_pass: supersecurepassword
-    db_root_pass: superrootpass
-    db_host: wp-db
-    wp_container_name: wp-app
-    wp_db_container_name: wp-db
-    domain: "kirill-gruzdy.ru"
-    email: "kirillgr15@mail.ru"
-    wordpress_data_dir: /srv/docker/wordpress
-    mariadb_data_dir: /srv/docker/mariadb
   tasks:
     - name: Display Configuration Variables
       ansible.builtin.debug:
@@ -40,6 +25,7 @@
           - gnupg
           - lsb-release
           - python3-docker
+          - python3-pymysql
         state: present
       when: ansible_distribution == "Ubuntu"
 
@@ -71,37 +57,75 @@
         driver: bridge
         state: present
 
-    - name: Create MariaDB data folder
+    - name: Create directories for MariaDB Master, configs and WordPress
       ansible.builtin.file:
-        path: "{{ mariadb_data_dir }}"
+        path: "{{ item }}"
         state: directory
-        owner: root
-        group: root
         mode: "0755"
+      loop:
+        - "{{ mariadb_master_data_dir }}"
+        - "/srv/docker/mariadb-conf"
+        - "/srv/docker/nginx-conf"
     
-    - name: Run MariaDB container
+    - name: Create WordPress data directory with correct permissions
+      ansible.builtin.file:
+        path: "{{ wordpress_data_dir }}"
+        state: directory
+        owner: 33 # www-data
+        group: 33 # www-data
+        mode: "0755"
+
+    - name: Create MariaDB master config from template
+      ansible.builtin.template:
+        src: templates/master.cnf.j2
+        dest: /srv/docker/mariadb-conf/master.cnf
+        mode: "0644"
+
+    - name: Run MariaDB Master container
       community.docker.docker_container:
-        name: "{{ wp_db_container_name }}"
+        name: "{{ db_master }}"
         image: mariadb:11
         state: started
         restart_policy: unless-stopped
         networks:
           - name: wp-network
+        ports:
+          - "127.0.0.1:3306:3306" # Для удобства проверки из Ansible
         env:
           MYSQL_DATABASE: "{{ wordpress_db_name }}"
           MYSQL_USER: "{{ db_user }}"
           MYSQL_PASSWORD: "{{ db_pass }}"
           MYSQL_ROOT_PASSWORD: "{{ db_root_pass }}"
+          MARIADB_REPLICATION_USER: "{{ db_repl_user }}"
+          MARIADB_REPLICATION_PASSWORD: "{{ db_repl_pass }}"
         volumes:
-          - "{{ mariadb_data_dir }}:/var/lib/mysql"
+          - "{{ mariadb_master_data_dir }}:/var/lib/mysql"
+          - "/srv/docker/mariadb-conf/master.cnf:/etc/mysql/conf.d/master.cnf:ro"
 
-    - name: Create WordPress data directory
-      ansible.builtin.file:
-        path: "{{ wordpress_data_dir }}"
-        state: directory
-        owner: 33
-        group: 33
-        mode: "0755"
+    - name: Wait for MariaDB Master port to be available
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 3306
+        state: started
+        delay: 5
+        timeout: 120
+
+    - name: Check if MariaDB Master is responding to queries
+      community.mysql.mysql_info:
+        login_user: root
+        login_password: "{{ db_root_pass }}"
+        login_host: 127.0.0.1
+        login_port: 3306
+      register: master_ping_result
+      until: master_ping_result is succeeded 
+      retries: 30
+      delay: 5
+
+    - name: Upload nginx config from template
+      ansible.builtin.template:
+        src: templates/wordpress.conf.j2
+        dest: /srv/docker/nginx-conf/wordpress.conf
+        mode: "0644"
     
     - name: Run WordPress FPM container
       community.docker.docker_container:
@@ -111,56 +135,14 @@
         restart_policy: unless-stopped
         networks:
           - name: wp-network
-        ports:
-          - "127.0.0.1:9000:9000"
         env:
-          WORDPRESS_DB_HOST: "{{ db_host }}"
+          WORDPRESS_DB_HOST: "{{ db_master }}"
           WORDPRESS_DB_NAME: "{{ wordpress_db_name }}"
           WORDPRESS_DB_USER: "{{ db_user }}"
           WORDPRESS_DB_PASSWORD: "{{ db_pass }}"
         volumes:
           - "{{ wordpress_data_dir }}:/var/www/html"
         
-    - name: Create nginx-conf dir for custom nginx config
-      ansible.builtin.file:
-        path: /srv/docker/nginx-conf
-        state: directory
-        mode: "0755"
-    
-    - name: Upload nginx config for WordPress FPM
-      ansible.builtin.copy:
-        dest: /srv/docker/nginx-conf/wordpress.conf
-        mode: "0644"
-        content: |
-          server {
-            listen 80;
-            server_name {{ domain }};
-
-            root /var/www/html;
-            index index.php;
-
-            location / {
-              try_files $uri $uri/ /index.php?$args;
-            }
-
-            rewrite /wp-admin$ $scheme://$host$uri/ permanent;
-
-            location ~ [^/]\.php(/|$) {
-              fastcgi_split_path_info ^(.+?\.php)(/.*)$;
-              if (!-f $document_root$fastcgi_script_name) {
-                return 404;
-              }
-
-              include fastcgi_params;
-              fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-              fastcgi_param PATH_INFO       $fastcgi_path_info;
-              fastcgi_param PATH_TRANSLATED $document_root$fastcgi_path_info;
-
-              fastcgi_pass   {{ wp_container_name }}:{{ wordpress_port }};
-              fastcgi_index  index.php;
-            }
-          }
-
     - name: Run nginx container for WordPress
       community.docker.docker_container:
         name: wp-nginx
@@ -169,6 +151,7 @@
         restart_policy: unless-stopped
         ports:
           - "80:80"
+          - "443:443"
         networks:
           - name: wp-network
         volumes:
