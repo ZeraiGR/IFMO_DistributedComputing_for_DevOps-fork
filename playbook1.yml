@@ -35,7 +35,6 @@
     - name: Install Docker & nginx dependencies (Ubuntu only)
       ansible.builtin.apt:
         name:
-          - apt-transport-https
           - ca-certificates
           - curl
           - gnupg
