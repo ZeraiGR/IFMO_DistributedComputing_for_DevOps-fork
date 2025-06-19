@@ -26,6 +26,7 @@
           - lsb-release
           - python3-docker
           - python3-pymysql
+          - mariadb-client # Клиент для ручной проверки (команда `mysql`, см. REAME 2 лб)
         state: present
       when: ansible_distribution == "Ubuntu"
 
@@ -90,7 +91,7 @@
         networks:
           - name: wp-network
         ports:
-          - "127.0.0.1:3306:3306" # Для удобства проверки из Ansible
+          - "127.0.0.1:3306:3306" # Для ручной проверки, см. REAME 2 лб
         env:
           MYSQL_DATABASE: "{{ wordpress_db_name }}"
           MYSQL_USER: "{{ db_user }}"
