@@ -1,19 +1,18 @@
 ---
 - name: Home work 2 - Add MariaDB Replica to the cluster
   hosts: carrier
+  vars:
+    db_root_pass: superrootpass
+    db_master: mariadb-master
+    db_replica: mariadb-replica
+    mariadb_master_data_dir: /srv/docker/mariadb-master
+    mariadb_replica_data_dir: /srv/docker/mariadb-replica
+    db_repl_user: repl_user
+    db_repl_pass: repl_password
   tasks:
     - name: Display a message
       ansible.builtin.debug:
         msg: "This playbook adds a replica to the existing MariaDB master. It assumes playbook1 has already been run."
-    - name: Display Configuration Variables
-      ansible.builtin.debug:
-        msg:
-          - "wordpress: {{ is_wordpress }}" # True or False
-          - "wordpress_port: {{ wordpress_port }}" # 80 or 8080 or whatewer
-          - "wordpress_db_name: {{ wordpress_db_name }}" # WP database name
-          - "db_master: {{ db_master }}" # container name
-          - "db_replica: {{ db_replica }}" # container name
-          - "db_pass: {{ db_pass }}" # root password for master and replica
 
     - name: Create data directory for MariaDB replica
       ansible.builtin.file:

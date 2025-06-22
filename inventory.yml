@@ -7,24 +7,3 @@ all:
       ansible_become: true
       ansible_become_method: sudo
       ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
-      # homework 1
-      is_wordpress: true
-      wordpress_port: 9000
-      wordpress_db_name: wp_db
-      db_user: wp_user
-      db_pass: supersecurepassword
-      db_root_pass: superrootpass
-      db_host: wp-db
-      wp_container_name: wp-app
-      wp_db_container_name: wp-db
-      domain: "kirill-gruzdy.ru"
-      email: "kirillgr15@mail.ru"
-      wordpress_data_dir: /srv/docker/wordpress
-      mariadb_data_dir: /srv/docker/mariadb
-      # homework 2
-      db_master: mariadb-master
-      db_replica: mariadb-replica
-      mariadb_master_data_dir: /srv/docker/mariadb-master
-      mariadb_replica_data_dir: /srv/docker/mariadb-replica
-      db_repl_user: repl_user
-      db_repl_pass: repl_password

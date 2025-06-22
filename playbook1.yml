@@ -2,6 +2,24 @@
 - name: Home work 1 - Deploy Base Infrastructure (Docker, WordPress, Nginx, DB Master)
   hosts: carrier
   become: true
+  vars:
+    is_wordpress: true
+    wordpress_port: 9000
+    wordpress_db_name: wp_db
+    db_user: wp_user
+    db_pass: supersecurepassword
+    db_root_pass: superrootpass
+    db_host: wp-db
+    wp_container_name: wp-app
+    wp_db_container_name: wp-db
+    domain: "kirill-gruzdy.ru"
+    email: "kirillgr15@mail.ru"
+    wordpress_data_dir: /srv/docker/wordpress
+    mariadb_data_dir: /srv/docker/mariadb
+    db_master: mariadb-master
+    mariadb_master_data_dir: /srv/docker/mariadb-master
+    db_repl_user: repl_user
+    db_repl_pass: repl_password
   tasks:
     - name: Display Configuration Variables
       ansible.builtin.debug:
