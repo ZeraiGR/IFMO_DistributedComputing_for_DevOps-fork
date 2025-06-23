@@ -20,6 +20,7 @@
     mariadb_master_data_dir: /srv/docker/mariadb-master
     db_repl_user: repl_user
     db_repl_pass: repl_password
+    monitor_pass: monitor_password
   tasks:
     - name: Display Configuration Variables
       ansible.builtin.debug:
@@ -139,6 +140,18 @@
       until: master_ping_result is succeeded 
       retries: 30
       delay: 5
+
+    - name: Create a monitoring user in MariaDB
+      community.mysql.mysql_user:
+        login_user: root
+        login_password: "{{ db_root_pass }}"
+        login_host: 127.0.0.1
+        login_port: 3306
+        name: monitor
+        password: "{{ monitor_pass }}"
+        host: '%'
+        priv: '*.*:PROCESS,REPLICATION CLIENT,SELECT'
+        state: present
 
     - name: Upload nginx config from template
       ansible.builtin.template:

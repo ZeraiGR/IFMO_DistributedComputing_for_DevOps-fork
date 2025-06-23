@@ -1,9 +1,12 @@
 all:
   hosts:
     carrier:
-      ansible_host: 158.160.137.134
-      ansible_user: kirill-gruzdy
-      ansible_ssh_private_key_file: /Users/kirill-gruzdy/.ssh/ansible-server-1/id_rsa
+      ansible_host: 192.168.XXX.XXX # пример реального хоста: 158.160.137.218
+      ansible_user: XXXXXXXX # пример реального пользователя: kirill-gruzdy
+      ansible_password: XXXXXXXX
+      # или через ssh ключ, пример:
+      # ansible_ssh_private_key_file: /Users/kirill-gruzdy/.ssh/ansible-server-1/id_rsa
       ansible_become: true
       ansible_become_method: sudo
+      ansible_become_pass: XXXXXXXX
       ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
