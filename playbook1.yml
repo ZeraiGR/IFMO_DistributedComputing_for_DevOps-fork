@@ -150,7 +150,7 @@
         name: monitor
         password: "{{ monitor_pass }}"
         host: '%'
-        priv: '*.*:PROCESS,REPLICATION CLIENT,SELECT'
+        priv: '*.*:PROCESS,REPLICATION CLIENT,SELECT,SLAVE MONITOR'
         state: present
 
     - name: Upload nginx config from template
