@@ -141,18 +141,6 @@
       retries: 30
       delay: 5
 
-    - name: Create a monitoring user in MariaDB
-      community.mysql.mysql_user:
-        login_user: root
-        login_password: "{{ db_root_pass }}"
-        login_host: 127.0.0.1
-        login_port: 3306
-        name: monitor
-        password: "{{ monitor_pass }}"
-        host: '%'
-        priv: '*.*:PROCESS,REPLICATION CLIENT,SELECT,SLAVE MONITOR'
-        state: present
-
     - name: Upload nginx config from template
       ansible.builtin.template:
         src: templates/wordpress.conf.j2

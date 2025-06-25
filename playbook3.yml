@@ -3,17 +3,26 @@
   hosts: carrier
   become: true
   vars:
-    prometheus_version: "v3.4.1"
-    grafana_version: "11.6.3"
-    node_exporter_version: "v1.9.1"
-    mysqld_exporter_version: "v0.17.2"
-
-    monitor_user: monitor
-    monitor_pass: monitor_password
-
-    db_master: mariadb-master
-    db_replica: mariadb-replica
+    monitoring_config_dir: /opt/monitoring
+    monitoring_network: wp-network
+    prometheus_image: "prom/prometheus:v3.4.1"
+    prometheus_port: 9090
+    grafana_image: "grafana/grafana:12.0.2"
+    grafana_port: 3000
+    grafana_data_dir: "{{ monitoring_config_dir }}/grafana_data"
+    grafana_admin_password: "admin"
   tasks:
+    - name: Ensure monitoring directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ item.owner | default(omit) }}"
+        group: "{{ item.group | default(omit) }}"
+      loop:
+        - { path: "{{ monitoring_config_dir }}" }
+        - { path: "{{ grafana_data_dir }}", owner: '472', group: '472' }
+        
     - name: Create directories for monitoring stack (Prometheus)
       ansible.builtin.file:
         path: "{{ item }}"
@@ -23,130 +32,41 @@
         - /srv/docker/prometheus
         - /srv/docker/grafana/provisioning/datasources
 
-    - name: Create Grafana data directory with correct permissions
-      ansible.builtin.file:
-        path: /srv/docker/grafana/data
-        state: directory
-        owner: "472" # UID пользователя grafana внутри контейнера
-        group: "472" # GID пользователя grafana внутри контейнера
-        mode: "0755"
-
-    - name: Run Node Exporter for host metrics
-      community.docker.docker_container:
-        name: node-exporter
-        image: "prom/node-exporter:{{ node_exporter_version }}"
-        state: started
-        restart_policy: unless-stopped
-        network_mode: host
-        pid_mode: host
-        volumes:
-          - /:/host:ro,rslave
-        command:
-          - '--path.rootfs=/host'
-    
-    - name: Create directory for mysqld-exporter configs
-      ansible.builtin.file:
-        path: /srv/docker/mysqld-exporter-conf
-        state: directory
-        mode: "0755"
-
-    - name: Create mysqld-exporter config for Master
-      ansible.builtin.template:
-        src: templates/mysqld_exporter.cnf.j2
-        dest: /srv/docker/mysqld-exporter-conf/master.cnf
-        mode: "0644"
-      vars:
-        db_host_to_monitor: "{{ db_master }}"
-
-    - name: Create mysqld-exporter config for Replica
-      ansible.builtin.template:
-        src: templates/mysqld_exporter.cnf.j2
-        dest: /srv/docker/mysqld-exporter-conf/replica.cnf
-        mode: "0644"
-      vars:
-        db_host_to_monitor: "{{ db_replica }}"
-
-    - name: Run MariaDB Exporter for Master
-      community.docker.docker_container:
-        name: mariadb-exporter-master
-        image: "prom/mysqld-exporter:{{ mysqld_exporter_version }}"
-        state: started
-        restart_policy: unless-stopped
-        networks:
-          - name: wp-network
-        ports:
-          - "9104:9104"
-        volumes:
-          - /srv/docker/mysqld-exporter-conf/master.cnf:/etc/mysql/my.cnf:ro
-        command:
-          - "--config.my-cnf=/etc/mysql/my.cnf"
-
-    - name: Run MariaDB Exporter for Replica
-      community.docker.docker_container:
-        name: mariadb-exporter-replica
-        image: "prom/mysqld-exporter:{{ mysqld_exporter_version }}"
-        state: started
-        restart_policy: unless-stopped
-        networks:
-          - name: wp-network
-        ports:
-          - "9105:9104"
-        volumes:
-          - /srv/docker/mysqld-exporter-conf/replica.cnf:/etc/mysql/my.cnf:ro
-        command:
-          - "--config.my-cnf=/etc/mysql/my.cnf"
-
-    - name: Create Prometheus config file from template
+    - name: Deploy Prometheus configuration from template
       ansible.builtin.template:
         src: templates/prometheus.yml.j2
-        dest: /srv/docker/prometheus/prometheus.yml
-        mode: "0644"
-      notify: Restart Prometheus
-
-    - name: Ensure Prometheus data directory has correct permissions
-      ansible.builtin.file:
-        path: /srv/docker/prometheus/data
-        state: directory
-        owner: "65534"
-        group: "65534"
-        mode: "0755"
-        recurse: yes
+        dest: "{{ monitoring_config_dir }}/prometheus.yml"
+        mode: '0644'
+      notify:
+        - Restart prometheus container
 
     - name: Run Prometheus container
       community.docker.docker_container:
         name: prometheus
-        image: "prom/prometheus:{{ prometheus_version }}"
+        image: "{{ prometheus_image }}"
         state: started
         restart_policy: unless-stopped
-        ports:
-          - "9090:9090"
-        networks:
-          - name: wp-network
+        pull: true
+        published_ports:
+          - "{{ prometheus_port }}:{{ prometheus_port }}"
         volumes:
-          - /srv/docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-          - /srv/docker/prometheus/data:/prometheus
-        etc_hosts:
-          host.docker.internal: host-gateway
-
-    - name: Create Grafana datasource config
-      ansible.builtin.template:
-        src: templates/grafana-datasource.yml.j2
-        dest: /srv/docker/grafana/provisioning/datasources/datasource.yml
-      notify: Restart Grafana
-
+          - "{{ monitoring_config_dir }}/prometheus.yml:/etc/prometheus/prometheus.yml"
+        networks:
+          - name: "{{ monitoring_network }}"
+    
     - name: Run Grafana container
       community.docker.docker_container:
         name: grafana
-        image: "grafana/grafana-oss:{{ grafana_version }}"
+        image: "{{ grafana_image }}"
         state: started
         restart_policy: unless-stopped
-        ports:
-          - "3000:3000"
-        networks:
-          - name: wp-network
+        pull: true
+        published_ports:
+          - "{{ grafana_port }}:3000"
         volumes:
-          - /srv/docker/grafana/data:/var/lib/grafana
-          - /srv/docker/grafana/provisioning:/etc/grafana/provisioning
+          - "{{ grafana_data_dir }}:/var/lib/grafana"
+        networks:
+          - name: "{{ monitoring_network }}"
     
     - name: Wait for Grafana to be ready
       ansible.builtin.wait_for:
@@ -157,36 +77,6 @@
         timeout: 300
       run_once: true
 
-    - name: Import Grafana dashboard from grafana.com (Galera/MariaDB - Overview)
-      become: false
-      community.grafana.grafana_dashboard:
-        grafana_url: "http://{{ ansible_host }}:3000"
-        grafana_user: admin
-        grafana_password: admin
-        dashboard_id: 13106
-        overwrite: yes
-      delegate_to: localhost
-      run_once: true
-      register: grafana_dashboard_import
-      until: grafana_dashboard_import is not failed
-      retries: 10
-      delay: 5
-
-    - name: Import Grafana dashboard from grafana.com (node-exporter disk graphs)
-      become: false
-      community.grafana.grafana_dashboard:
-        grafana_url: "http://{{ ansible_host }}:3000"
-        grafana_user: admin
-        grafana_password: admin
-        dashboard_id: 9852
-        overwrite: yes
-      delegate_to: localhost
-      run_once: true
-      register: grafana_dashboard_import
-      until: grafana_dashboard_import is not failed
-      retries: 10
-      delay: 5
-
     - name: Show monitoring access info
       ansible.builtin.debug:
         msg:
@@ -194,14 +84,8 @@
           - "Grafana URL: http://{{ ansible_host }}:3000  (Login: admin/admin)"
 
   handlers:
-    - name: Restart Prometheus
+    - name: Restart prometheus container
       community.docker.docker_container:
         name: prometheus
         state: started
-        restart: yes
-
-    - name: Restart Grafana
-      community.docker.docker_container:
-        name: grafana
-        state: started
-        restart: yes
+        restart: true
